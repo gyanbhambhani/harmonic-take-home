@@ -16,6 +16,10 @@ const darkTheme = createTheme({
 function App() {
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>();
   const { data: collectionResponse } = useApi(() => getCollectionsMetadata());
+  
+  // Find collection IDs for easy access
+  const myListCollection = collectionResponse?.find(c => c.collection_name === "My List");
+  const likedCompaniesCollection = collectionResponse?.find(c => c.collection_name === "Liked Companies List");
 
   useEffect(() => {
     setSelectedCollectionId(collectionResponse?.[0]?.id);
@@ -58,8 +62,12 @@ function App() {
             </div>
           </div>
           <div className="w-4/5 ml-4">
-            {selectedCollectionId && (
-              <CompanyTable selectedCollectionId={selectedCollectionId} />
+            {selectedCollectionId && myListCollection && likedCompaniesCollection && (
+              <CompanyTable 
+                selectedCollectionId={selectedCollectionId}
+                myListCollectionId={myListCollection.id}
+                likedCompaniesCollectionId={likedCompaniesCollection.id}
+              />
             )}
           </div>
         </div>
