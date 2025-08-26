@@ -1,7 +1,8 @@
-import { DataGrid, GridRowSelectionModel } from "@mui/x-data-grid";
+import { DataGrid, GridRowSelectionModel, GridRenderCellParams } from "@mui/x-data-grid";
 import { useEffect, useState } from "react";
-import { getCollectionsById, ICompany } from "../utils/jam-api";
+import { getCollectionsById, ICompany, toggleCompanyInCollection } from "../utils/jam-api";
 import CollectionActions from "./CollectionActions";
+import HeartIcon from "./HeartIcon";
 
 const CompanyTable = (props: { 
   selectedCollectionId: string;
@@ -41,6 +42,19 @@ const CompanyTable = (props: {
     );
   };
 
+  const handleToggleLike = async (companyId: number) => {
+    try {
+      // Toggle the company in the "Liked Companies" collection
+      const likedCollectionId = props.likedCompaniesCollectionId;
+      await toggleCompanyInCollection(likedCollectionId, companyId);
+      
+      // Refresh the data to show updated like status
+      handleSuccess();
+    } catch (error) {
+      console.error('Error toggling like status:', error);
+    }
+  };
+
   // Determine target collection based on current collection
   const getTargetCollection = () => {
     if (collectionName === "My List") {
@@ -69,11 +83,24 @@ const CompanyTable = (props: {
       <div style={{ height: 600, width: "100%" }}>
         <DataGrid
           rows={response}
-          rowHeight={30}
+          rowHeight={50}
           columns={[
-            { field: "liked", headerName: "Liked", width: 90 },
+            {
+              field: "liked",
+              headerName: "Liked",
+              width: 60,
+              sortable: false,
+              renderCell: (params: GridRenderCellParams) => (
+                <HeartIcon
+                  isLiked={params.row.liked}
+                  onToggle={() => handleToggleLike(params.row.id)}
+                  companyId={params.row.id}
+                  companyName={params.row.company_name}
+                />
+              ),
+            },
             { field: "id", headerName: "ID", width: 90 },
-            { field: "company_name", headerName: "Company Name", width: 200 },
+            { field: "company_name", headerName: "Company Name", width: 300 },
           ]}
           initialState={{
             pagination: {
@@ -91,6 +118,18 @@ const CompanyTable = (props: {
           onPaginationModelChange={(newMeta) => {
             setPageSize(newMeta.pageSize);
             setOffset(newMeta.page * newMeta.pageSize);
+          }}
+          sx={{
+            '& .MuiDataGrid-cell': {
+              borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+            },
+            '& .MuiDataGrid-columnHeaders': {
+              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+              borderBottom: '2px solid rgba(255, 255, 255, 0.1)',
+            },
+            '& .MuiDataGrid-row:hover': {
+              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+            },
           }}
         />
       </div>

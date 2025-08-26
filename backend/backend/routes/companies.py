@@ -65,7 +65,13 @@ def get_companies(
     limit: int = Query(10, description="The number of items to fetch"),
     db: Session = Depends(database.get_db),
 ):
-    results = db.query(database.Company).offset(offset).limit(limit).all()
+    results = (
+        db.query(database.Company)
+        .order_by(database.Company.id.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
     count = db.query(database.Company).count()
     companies = fetch_companies_with_liked(db, [company.id for company in results])

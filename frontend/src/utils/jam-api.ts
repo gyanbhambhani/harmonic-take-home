@@ -25,6 +25,12 @@ export interface IAddCompaniesResponse {
     message: string;
     added_count: number;
     total_companies_in_target: number;
+    progress?: {
+        total_requested: number;
+        already_existed: number;
+        newly_added: number;
+        completion_percentage: number;
+    };
 }
 
 export interface ICollectionCompanyIdsResponse {
@@ -89,12 +95,93 @@ export async function addCompaniesToCollection(
     }
 }
 
+interface ProgressData {
+    type: 'start' | 'progress' | 'complete' | 'error';
+    message?: string;
+    total?: number;
+    processed?: number;
+    progress?: number;
+    newly_added?: number;
+    total_processed?: number;
+}
+
+export async function addCompaniesToCollectionStream(
+    targetCollectionId: string,
+    companyIds: number[],
+    onProgress: (data: ProgressData) => void
+): Promise<void> {
+    try {
+        const response = await fetch(`${BASE_URL}/collections/${targetCollectionId}/add-companies-stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ company_ids: companyIds }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to start streaming operation');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error('No response body');
+        }
+
+        const decoder = new TextDecoder();
+        
+        let shouldContinue = true;
+        while (shouldContinue) {
+            const { done, value } = await reader.read();
+            if (done) {
+                shouldContinue = false;
+                break;
+            }
+            
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        onProgress(data);
+                        
+                        if (data.type === 'complete' || data.type === 'error') {
+                            shouldContinue = false;
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing SSE data:', e);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error in streaming operation:', error);
+        throw error;
+    }
+}
+
 export async function getCollectionCompanyIds(collectionId: string): Promise<ICollectionCompanyIdsResponse> {
     try {
         const response = await axios.get(`${BASE_URL}/collections/${collectionId}/company-ids`);
         return response.data;
     } catch (error) {
         console.error('Error fetching collection company IDs:', error);
+        throw error;
+    }
+}
+
+export async function toggleCompanyInCollection(
+    collectionId: string,
+    companyId: number
+): Promise<{ message: string; is_in_collection: boolean }> {
+    try {
+        const response = await axios.post(`${BASE_URL}/collections/${collectionId}/toggle-company/${companyId}`);
+        return response.data;
+    } catch (error) {
+        console.error('Error toggling company in collection:', error);
         throw error;
     }
 }

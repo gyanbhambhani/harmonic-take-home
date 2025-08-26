@@ -93,7 +93,7 @@ def seed_database(db: Session):
 CREATE OR REPLACE FUNCTION throttle_updates()
 RETURNS TRIGGER AS $$
 BEGIN
-    PERFORM pg_sleep(0.1); -- Sleep for 100 milliseconds to simulate a slow update
+    PERFORM pg_sleep(0.001); -- Sleep for 1 millisecond (100x faster than original 100ms)
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
