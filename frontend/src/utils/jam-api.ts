@@ -185,3 +185,184 @@ export async function toggleCompanyInCollection(
         throw error;
     }
 }
+
+
+export async function likeCompaniesBulk(
+    companyIds: number[]
+): Promise<{ 
+    message: string; 
+    newly_liked: number; 
+    already_liked: number; 
+    total_liked: number;
+    progress: {
+        total_requested: number;
+        newly_liked: number;
+        already_liked: number;
+        completion_percentage: number;
+    };
+}> {
+    try {
+        const response = await axios.post(`${BASE_URL}/collections/like-companies`, {
+            company_ids: companyIds,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error liking companies:', error);
+        throw error;
+    }
+}
+
+export async function unlikeCompaniesBulk(
+    companyIds: number[]
+): Promise<{ 
+    message: string; 
+    newly_unliked: number; 
+    already_unliked: number; 
+    total_liked: number;
+    progress: {
+        total_requested: number;
+        newly_unliked: number;
+        already_unliked: number;
+        completion_percentage: number;
+    };
+}> {
+    try {
+        const response = await axios.post(`${BASE_URL}/collections/unlike-companies`, {
+            company_ids: companyIds,
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error unliking companies:', error);
+        throw error;
+    }
+}
+
+interface ProgressData {
+    type: 'start' | 'progress' | 'complete' | 'error';
+    message?: string;
+    total?: number;
+    processed?: number;
+    progress?: number;
+    newly_liked?: number;
+    newly_unliked?: number;
+    already_liked?: number;
+    already_unliked?: number;
+    current_company?: string;
+    company_id?: number;
+    operation?: 'like' | 'unlike';
+    total_processed?: number;
+}
+
+export async function likeCompaniesStream(
+    companyIds: number[],
+    onProgress: (data: ProgressData) => void
+): Promise<void> {
+    try {
+        const response = await fetch(`${BASE_URL}/collections/like-companies-stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ company_ids: companyIds }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to start streaming operation');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error('No response body');
+        }
+
+        const decoder = new TextDecoder();
+        
+        let shouldContinue = true;
+        while (shouldContinue) {
+            const { done, value } = await reader.read();
+            if (done) {
+                shouldContinue = false;
+                break;
+            }
+            
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        onProgress(data);
+                        
+                        if (data.type === 'complete' || data.type === 'error') {
+                            shouldContinue = false;
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing SSE data:', e);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error in streaming operation:', error);
+        throw error;
+    }
+}
+
+export async function unlikeCompaniesStream(
+    companyIds: number[],
+    onProgress: (data: ProgressData) => void
+): Promise<void> {
+    try {
+        const response = await fetch(`${BASE_URL}/collections/unlike-companies-stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ company_ids: companyIds }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to start streaming operation');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error('No response body');
+        }
+
+        const decoder = new TextDecoder();
+        
+        let shouldContinue = true;
+        while (shouldContinue) {
+            const { done, value } = await reader.read();
+            if (done) {
+                shouldContinue = false;
+                break;
+            }
+            
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        onProgress(data);
+                        
+                        if (data.type === 'complete' || data.type === 'error') {
+                            shouldContinue = false;
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing SSE data:', e);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error in streaming operation:', error);
+        throw error;
+    }
+}

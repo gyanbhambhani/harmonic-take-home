@@ -29,6 +29,8 @@ const CompanyTable = (props: {
   useEffect(() => {
     setOffset(0);
     setSelectedRows([]);
+    // Reset response to empty array to show loading state
+    setResponse([]);
   }, [props.selectedCollectionId]);
 
   const handleSuccess = () => {
@@ -38,6 +40,8 @@ const CompanyTable = (props: {
         setResponse(newResponse.companies);
         setTotal(newResponse.total);
         setCollectionName(newResponse.collection_name);
+        // Clear selection after successful operation
+        setSelectedRows([]);
       }
     );
   };
@@ -107,7 +111,7 @@ const CompanyTable = (props: {
               paginationModel: { page: 0, pageSize: 25 },
             },
           }}
-          rowCount={total}
+          rowCount={total || 0}
           pagination
           checkboxSelection
           paginationMode="server"

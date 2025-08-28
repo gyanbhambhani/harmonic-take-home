@@ -389,3 +389,418 @@ def toggle_company_in_collection(
         "message": f"Company {company.company_name} {action} {collection.collection_name}",
         "is_in_collection": not existing_association,
     }
+
+
+@router.post("/like-companies")
+def like_companies_bulk(
+    request: AddCompaniesRequest,
+    db: Session = Depends(database.get_db),
+):
+    """
+    Like multiple companies (only if they are currently unliked).
+    """
+    # Get collection IDs
+    my_list_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="My List")
+        .first()
+    )
+    liked_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="Liked Companies List")
+        .first()
+    )
+
+    if not my_list_collection or not liked_collection:
+        raise HTTPException(status_code=404, detail="Required collections not found")
+
+    # Verify all companies exist
+    companies = (
+        db.query(database.Company)
+        .filter(database.Company.id.in_(request.company_ids))
+        .all()
+    )
+
+    if len(companies) != len(request.company_ids):
+        found_ids = {company.id for company in companies}
+        missing_ids = set(request.company_ids) - found_ids
+        raise HTTPException(
+            status_code=404, detail=f"Companies not found: {list(missing_ids)}"
+        )
+
+    # Check current liked status for each company
+    liked_associations = (
+        db.query(database.CompanyCollectionAssociation)
+        .filter(
+            database.CompanyCollectionAssociation.collection_id == liked_collection.id,
+            database.CompanyCollectionAssociation.company_id.in_(request.company_ids),
+        )
+        .all()
+    )
+
+    currently_liked_ids = {assoc.company_id for assoc in liked_associations}
+
+    # Only like companies that are currently unliked
+    companies_to_like = set(request.company_ids) - currently_liked_ids
+    already_liked_count = len(currently_liked_ids & set(request.company_ids))
+
+    newly_liked = 0
+
+    # Process companies to like
+    for company_id in sorted(companies_to_like):
+        new_association = database.CompanyCollectionAssociation(
+            company_id=company_id, collection_id=liked_collection.id
+        )
+        db.add(new_association)
+        newly_liked += 1
+
+    db.commit()
+
+    total_liked = (
+        db.query(database.CompanyCollectionAssociation)
+        .filter(
+            database.CompanyCollectionAssociation.collection_id == liked_collection.id
+        )
+        .count()
+    )
+
+    return {
+        "message": f"Successfully liked {newly_liked} companies ({already_liked_count} were already liked)",
+        "newly_liked": newly_liked,
+        "already_liked": already_liked_count,
+        "total_liked": total_liked,
+        "progress": {
+            "total_requested": len(request.company_ids),
+            "newly_liked": newly_liked,
+            "already_liked": already_liked_count,
+            "completion_percentage": 100,
+        },
+    }
+
+
+@router.post("/like-companies-stream")
+async def like_companies_stream(
+    request: AddCompaniesRequest,
+    db: Session = Depends(database.get_db),
+):
+    """
+    Like multiple companies with real-time progress streaming.
+    """
+    # Get collection IDs
+    my_list_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="My List")
+        .first()
+    )
+    liked_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="Liked Companies List")
+        .first()
+    )
+
+    if not my_list_collection or not liked_collection:
+        raise HTTPException(status_code=404, detail="Required collections not found")
+
+    # Verify all companies exist
+    companies = (
+        db.query(database.Company)
+        .filter(database.Company.id.in_(request.company_ids))
+        .all()
+    )
+
+    if len(companies) != len(request.company_ids):
+        found_ids = {company.id for company in companies}
+        missing_ids = set(request.company_ids) - found_ids
+        raise HTTPException(
+            status_code=404, detail=f"Companies not found: {list(missing_ids)}"
+        )
+
+    # Check current liked status for each company
+    liked_associations = (
+        db.query(database.CompanyCollectionAssociation)
+        .filter(
+            database.CompanyCollectionAssociation.collection_id == liked_collection.id,
+            database.CompanyCollectionAssociation.company_id.in_(request.company_ids),
+        )
+        .all()
+    )
+
+    currently_liked_ids = {assoc.company_id for assoc in liked_associations}
+
+    # Only like companies that are currently unliked
+    companies_to_like = set(request.company_ids) - currently_liked_ids
+    already_liked_count = len(currently_liked_ids & set(request.company_ids))
+
+    async def progress_stream():
+        if not companies_to_like:
+            # All companies already liked
+            yield f"data: {json.dumps({'type': 'complete', 'message': f'All companies already liked ({already_liked_count} companies)', 'newly_liked': 0, 'already_liked': already_liked_count, 'progress': 100})}\n\n"
+            return
+
+        # Sort companies by ID for consistent ordering
+        sorted_company_ids = sorted(companies_to_like)
+        total_to_process = len(sorted_company_ids)
+        processed = 0
+        newly_liked = 0
+
+        # Send initial progress
+        yield f"data: {json.dumps({'type': 'start', 'total': total_to_process, 'processed': 0, 'progress': 0, 'operation': 'like'})}\n\n"
+
+        for company_id in sorted_company_ids:
+            try:
+                # Get company name for progress display
+                company = db.query(database.Company).get(company_id)
+                company_name = (
+                    company.company_name if company else f"Company {company_id}"
+                )
+
+                # Check if company already exists (in case it was added by another process)
+                existing = (
+                    db.query(database.CompanyCollectionAssociation)
+                    .filter(
+                        database.CompanyCollectionAssociation.collection_id
+                        == liked_collection.id,
+                        database.CompanyCollectionAssociation.company_id == company_id,
+                    )
+                    .first()
+                )
+
+                if not existing:
+                    # Create new association (this will trigger the 1ms throttle)
+                    new_association = database.CompanyCollectionAssociation(
+                        company_id=company_id, collection_id=liked_collection.id
+                    )
+                    db.add(new_association)
+                    db.commit()
+                    newly_liked += 1
+
+                processed += 1
+                progress = int((processed / total_to_process) * 100)
+
+                # Send progress update
+                yield f"data: {json.dumps({'type': 'progress', 'processed': processed, 'total': total_to_process, 'progress': progress, 'newly_liked': newly_liked, 'current_company': company_name, 'company_id': company_id})}\n\n"
+
+                # Small delay to make progress visible
+                await asyncio.sleep(0.001)
+
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                return
+
+        # Send completion
+        yield f"data: {json.dumps({'type': 'complete', 'message': f'Successfully liked {newly_liked} companies ({already_liked_count} were already liked)', 'total_processed': processed, 'newly_liked': newly_liked, 'already_liked': already_liked_count, 'progress': 100})}\n\n"
+
+    return StreamingResponse(
+        progress_stream(),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@router.post("/unlike-companies")
+def unlike_companies_bulk(
+    request: AddCompaniesRequest,
+    db: Session = Depends(database.get_db),
+):
+    """
+    Unlike multiple companies (only if they are currently liked).
+    """
+    # Get collection IDs
+    my_list_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="My List")
+        .first()
+    )
+    liked_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="Liked Companies List")
+        .first()
+    )
+
+    if not my_list_collection or not liked_collection:
+        raise HTTPException(status_code=404, detail="Required collections not found")
+
+    # Verify all companies exist
+    companies = (
+        db.query(database.Company)
+        .filter(database.Company.id.in_(request.company_ids))
+        .all()
+    )
+
+    if len(companies) != len(request.company_ids):
+        found_ids = {company.id for company in companies}
+        missing_ids = set(request.company_ids) - found_ids
+        raise HTTPException(
+            status_code=404, detail=f"Companies not found: {list(missing_ids)}"
+        )
+
+    # Check current liked status for each company
+    liked_associations = (
+        db.query(database.CompanyCollectionAssociation)
+        .filter(
+            database.CompanyCollectionAssociation.collection_id == liked_collection.id,
+            database.CompanyCollectionAssociation.company_id.in_(request.company_ids),
+        )
+        .all()
+    )
+
+    currently_liked_ids = {assoc.company_id for assoc in liked_associations}
+
+    # Only unlike companies that are currently liked
+    companies_to_unlike = currently_liked_ids & set(request.company_ids)
+    already_unliked_count = len(set(request.company_ids) - currently_liked_ids)
+
+    newly_unliked = 0
+
+    # Process companies to unlike
+    for company_id in sorted(companies_to_unlike):
+        existing_association = (
+            db.query(database.CompanyCollectionAssociation)
+            .filter(
+                database.CompanyCollectionAssociation.collection_id
+                == liked_collection.id,
+                database.CompanyCollectionAssociation.company_id == company_id,
+            )
+            .first()
+        )
+        if existing_association:
+            db.delete(existing_association)
+            newly_unliked += 1
+
+    db.commit()
+
+    total_liked = (
+        db.query(database.CompanyCollectionAssociation)
+        .filter(
+            database.CompanyCollectionAssociation.collection_id == liked_collection.id
+        )
+        .count()
+    )
+
+    return {
+        "message": f"Successfully unliked {newly_unliked} companies ({already_unliked_count} were already unliked)",
+        "newly_unliked": newly_unliked,
+        "already_unliked": already_unliked_count,
+        "total_liked": total_liked,
+        "progress": {
+            "total_requested": len(request.company_ids),
+            "newly_unliked": newly_unliked,
+            "already_unliked": already_unliked_count,
+            "completion_percentage": 100,
+        },
+    }
+
+
+@router.post("/unlike-companies-stream")
+async def unlike_companies_stream(
+    request: AddCompaniesRequest,
+    db: Session = Depends(database.get_db),
+):
+    """
+    Unlike multiple companies with real-time progress streaming.
+    """
+    # Get collection IDs
+    my_list_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="My List")
+        .first()
+    )
+    liked_collection = (
+        db.query(database.CompanyCollection)
+        .filter_by(collection_name="Liked Companies List")
+        .first()
+    )
+
+    if not my_list_collection or not liked_collection:
+        raise HTTPException(status_code=404, detail="Required collections not found")
+
+    # Verify all companies exist
+    companies = (
+        db.query(database.Company)
+        .filter(database.Company.id.in_(request.company_ids))
+        .all()
+    )
+
+    if len(companies) != len(request.company_ids):
+        found_ids = {company.id for company in companies}
+        missing_ids = set(request.company_ids) - found_ids
+        raise HTTPException(
+            status_code=404, detail=f"Companies not found: {list(missing_ids)}"
+        )
+
+    # Check current liked status for each company
+    liked_associations = (
+        db.query(database.CompanyCollectionAssociation)
+        .filter(
+            database.CompanyCollectionAssociation.collection_id == liked_collection.id,
+            database.CompanyCollectionAssociation.company_id.in_(request.company_ids),
+        )
+        .all()
+    )
+
+    currently_liked_ids = {assoc.company_id for assoc in liked_associations}
+
+    # Only unlike companies that are currently liked
+    companies_to_unlike = currently_liked_ids & set(request.company_ids)
+    already_unliked_count = len(set(request.company_ids) - currently_liked_ids)
+
+    async def progress_stream():
+        if not companies_to_unlike:
+            # All companies already unliked
+            yield f"data: {json.dumps({'type': 'complete', 'message': f'All companies already unliked ({already_unliked_count} companies)', 'newly_unliked': 0, 'already_unliked': already_unliked_count, 'progress': 100})}\n\n"
+            return
+
+        # Sort companies by ID for consistent ordering
+        sorted_company_ids = sorted(companies_to_unlike)
+        total_to_process = len(sorted_company_ids)
+        processed = 0
+        newly_unliked = 0
+
+        # Send initial progress
+        yield f"data: {json.dumps({'type': 'start', 'total': total_to_process, 'processed': 0, 'progress': 0, 'operation': 'unlike'})}\n\n"
+
+        for company_id in sorted_company_ids:
+            try:
+                # Get company name for progress display
+                company = db.query(database.Company).get(company_id)
+                company_name = (
+                    company.company_name if company else f"Company {company_id}"
+                )
+
+                # Remove from liked collection
+                existing_association = (
+                    db.query(database.CompanyCollectionAssociation)
+                    .filter(
+                        database.CompanyCollectionAssociation.collection_id
+                        == liked_collection.id,
+                        database.CompanyCollectionAssociation.company_id == company_id,
+                    )
+                    .first()
+                )
+
+                if existing_association:
+                    db.delete(existing_association)
+                    db.commit()
+                    newly_unliked += 1
+
+                processed += 1
+                progress = int((processed / total_to_process) * 100)
+
+                # Send progress update
+                yield f"data: {json.dumps({'type': 'progress', 'processed': processed, 'total': total_to_process, 'progress': progress, 'newly_unliked': newly_unliked, 'current_company': company_name, 'company_id': company_id})}\n\n"
+
+                # Small delay to make progress visible
+                await asyncio.sleep(0.001)
+
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                return
+
+        # Send completion
+        yield f"data: {json.dumps({'type': 'complete', 'message': f'Successfully unliked {newly_unliked} companies ({already_unliked_count} were already unliked)', 'total_processed': processed, 'newly_unliked': newly_unliked, 'already_unliked': already_unliked_count, 'progress': 100})}\n\n"
+
+    return StreamingResponse(
+        progress_stream(),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )

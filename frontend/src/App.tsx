@@ -15,7 +15,7 @@ const darkTheme = createTheme({
 
 function App() {
   const [selectedCollectionId, setSelectedCollectionId] = useState<string>();
-  const { data: collectionResponse } = useApi(() => getCollectionsMetadata());
+  const { data: collectionResponse, loading, error } = useApi(() => getCollectionsMetadata());
   
   // Find collection IDs for easy access
   const myListCollection = collectionResponse?.find(c => c.collection_name === "My List");
@@ -47,6 +47,7 @@ function App() {
               {collectionResponse?.map((collection) => {
                 return (
                   <div
+                    key={collection.id}
                     className={`py-1 pl-4 hover:cursor-pointer hover:bg-orange-300 ${
                       selectedCollectionId === collection.id &&
                       "bg-orange-500 font-bold"

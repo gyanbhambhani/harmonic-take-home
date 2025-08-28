@@ -16,12 +16,15 @@ async def lifespan(app: FastAPI):
     database.Base.metadata.create_all(bind=database.engine)
 
     db = database.SessionLocal()
-    if not db.query(database.Settings).get("seeded"):
+    seeded_setting = (
+        db.query(database.Settings).filter_by(setting_name="seeded").first()
+    )
+    if not seeded_setting:
         seed_database(db)
 
         db.add(database.Settings(setting_name="seeded"))
         db.commit()
-        db.close()
+    db.close()
     yield
     # Clean up...
 
@@ -30,15 +33,12 @@ app = FastAPI(lifespan=lifespan)
 
 
 def seed_database(db: Session):
-    db.execute(text("TRUNCATE TABLE company_collections CASCADE;"))
-    db.execute(text("TRUNCATE TABLE companies CASCADE;"))
-    db.execute(text("TRUNCATE TABLE company_collection_associations CASCADE;"))
-    db.execute(
-        text("""
-    DROP TRIGGER IF EXISTS throttle_updates_trigger ON company_collection_associations;
-    """)
-    )
-    db.commit()
+    # Only truncate if tables are empty (first time seeding)
+    company_count = db.query(database.Company).count()
+    if company_count > 0:
+        return  # Already seeded
+
+    # Create trigger function and trigger
 
     companies = [
         database.Company(company_name=randomname.get_name().replace("-", " ").title())
